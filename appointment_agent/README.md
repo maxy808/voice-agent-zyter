@@ -118,7 +118,7 @@ date,doctor,appointment_type,location,modality
 ```
 ## How to Run
 ### Run demo
-cd appointment_agent/src
+cd appointment_agent/demos
 python appointment_agent_workflow.py
 
 ## Example Session
