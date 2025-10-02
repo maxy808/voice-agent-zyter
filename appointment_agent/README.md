@@ -144,3 +144,6 @@ Agent: I can offer these times: October 09 at 10:00 AM (Clinic A, in_person), Oc
 Required if you want LLM parsing and Q&A generation (OPENAI_API_KEY).
 
 If no key is set, the workflow still runs in rule-based mode.
+
+export OPENAI_API_KEY=sk-xxxx   # Mac/Linux
+setx OPENAI_API_KEY "sk-xxxx"   # Windows
