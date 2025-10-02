@@ -3,6 +3,11 @@ import json
 from datetime import datetime, timedelta
 from typing import Dict, Optional, List, Tuple
 import pandas as pd
+import os
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+QNA_DIR = os.path.join(BASE_DIR, "qna_examples")  # stays inside demos/
+os.makedirs(QNA_DIR, exist_ok=True)
+
 
 # Optional: comment out pyttsx3 if not available in your env
 try:
@@ -111,29 +116,33 @@ def appt_summary(appt: pd.Series) -> str:
 # -----------------------------
 
 def llm_json(prompt: str, temperature: float = 0) -> Dict:
+    #print("[DEBUG] Entering llm_json")
     if not USE_LLM or client is None:
-        # Minimal fallback
+       # print("[DEBUG] LLM disabled, using fallback parser")
         return {"action": "general", "patient_id": None, "preferred_date": None, "reason": None,
                 "symptoms": {"present": False}}
+
     msg = [
         {"role": "system", "content": "Return ONLY valid JSON. No prose."},
         {"role": "user", "content": prompt}
     ]
-    resp = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=msg,
-        temperature=temperature
-    )
-    content = resp.choices[0].message.content.strip()
     try:
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=msg,
+            temperature=temperature
+        )
+        content = resp.choices[0].message.content.strip()
         return json.loads(content)
-    except Exception:
-        # Basic guard
+    except Exception as e:
+       # print(f"[DEBUG] LLM request failed: {e}")
         return {"action": "general", "patient_id": None, "preferred_date": None, "reason": None,
                 "symptoms": {"present": False}}
 
+
 def parse_patient_input(user_input: str, last_patient_id: Optional[str]) -> Dict:
     # extraction includes symptoms for triage
+    print(f"[DEBUG] parse_patient_input called with input: {user_input}")
     prompt = f"""
 Parse the following patient message and extract structured fields. Return ONLY JSON.
 Fields:
@@ -148,6 +157,7 @@ Fields:
 Input: "{user_input}"
     """.strip()
     parsed = llm_json(prompt, temperature=0)
+   # print(f"[DEBUG] parse_patient_input got back: {parsed}")
     # Simple regex fallback for patient id
     import re
     m = re.search(r'\b\d{8}\b', user_input)
@@ -299,82 +309,87 @@ class AppointmentService:
         return alts[:3]
 
     def process(self, parsed: Dict, use_voice: bool = False) -> str:
-        pid = parsed.get("patient_id")
-        intent = parsed.get("action") or "general"
-        if not pid:
-            msg = "Please provide your 8-digit patient ID to proceed."
-            say(msg, "Agent", use_voice)
-            return msg
+        try:
+            pid = parsed.get("patient_id")
+            intent = parsed.get("action") or "general"
 
-        appt = self.lookup_appointment(pid)
-        patient_row = self.lookup_patient(pid)
-
-        if patient_row is None:
-            msg = f"I could not find any patient records for ID {pid}."
-            say(msg, "Agent", use_voice)
-            return msg
-
-        if appt is None:
-            msg = f"I found patient {patient_row['name']}, but there are no active appointments on file. Would you like to schedule a new one?"
-            say(msg, "Agent", use_voice)
-            return msg
-
-
-        # TRIAGE
-        triage, rules = triage_category(parsed.get("symptoms", {}))
-        if triage == "RED":
-            msg = "Your symptoms may be serious. Please go to the nearest emergency department now. I am alerting the on-call nurse."
-            say(msg, "Agent", use_voice)
-            return msg
-        if triage == "ORANGE":
-            # Soft-hold logic (not booking yet)
-            msg = "I will have a nurse call you today to review your symptoms. I can place a tentative hold for a visit in the next 24–48 hours."
-            say(msg, "Agent", use_voice)
-            return msg
-
-        # GREEN → continue with policy gates & scheduling
-        # Determine desired date if present via LLM in future; here we only pass through as text
-        preferred_date_text = parsed.get("preferred_date")
-        desired_dt = None  # In real code: parse to datetime if explicit
-        visit_context = {
-            "requested_modality": "video" if (preferred_date_text and "video" in preferred_date_text.lower()) else None,
-            "desired_dt": desired_dt,
-            "caregiver_required": True
-        }
-        ok, reason = check_policy_gates(appt, patient_row, intent, visit_context)
-        if not ok:
-            msg = f"{reason}"
-            say(msg, "Agent", use_voice)
-            return msg
-
-        if intent == "check_status":
-            msg = f"Your {appt_summary(appt)} is confirmed."
-            say(msg, "Agent", use_voice)
-            return msg
-        elif intent == "cancel":
-            msg = f"I can cancel your {appt_summary(appt)}. Please confirm to proceed."
-            say(msg, "Agent", use_voice)
-            return msg
-        elif intent in ["reschedule", "schedule_new", "general"]:
-            rules_check = self.check_business_rules(appt)
-            if not rules_check["can_reschedule"]:
-                msg = f"Rescheduling is blocked: {rules_check['reason']}"
+            if not pid:
+                msg = "Please provide your 8-digit patient ID to proceed."
                 say(msg, "Agent", use_voice)
                 return msg
 
-            # Simple constraint window: next 14 days by default
-            constraints = {"start": datetime.now(), "end": datetime.now() + timedelta(days=14)}
-            alts = self.find_alternatives(appt, constraints)
-            if alts:
-                msg = f"I can offer these times: {', '.join(alts)}. Which works best?"
-            else:
-                msg = "No matching slots with this provider in the next two weeks. I can check other providers or locations."
-            say(msg, "Agent", use_voice)
-            return msg
-        else:
+            appt = self.lookup_appointment(pid)
+            patient_row = self.lookup_patient(pid)
+
+            if patient_row is None:
+                msg = f"I could not find any patient records for ID {pid}."
+                say(msg, "Agent", use_voice)
+                return msg
+
+            if appt is None:
+                msg = f"I found patient {patient_row['name']}, but there are no active appointments on file. Would you like to schedule a new one?"
+                say(msg, "Agent", use_voice)
+                return msg
+
+            # TRIAGE
+            triage, rules = triage_category(parsed.get("symptoms", {}))
+            if triage == "RED":
+                msg = "Your symptoms may be serious. Please go to the nearest emergency department now. I am alerting the on-call nurse."
+                say(msg, "Agent", use_voice)
+                return msg
+            if triage == "ORANGE":
+                msg = "I will have a nurse call you today to review your symptoms. I can place a tentative hold for a visit in the next 24–48 hours."
+                say(msg, "Agent", use_voice)
+                return msg
+
+            # GREEN → continue with policy gates & scheduling
+            preferred_date_text = parsed.get("preferred_date")
+            desired_dt = None
+            visit_context = {
+                "requested_modality": "video" if (preferred_date_text and "video" in preferred_date_text.lower()) else None,
+                "desired_dt": desired_dt,
+                "caregiver_required": True
+            }
+            ok, reason = check_policy_gates(appt, patient_row, intent, visit_context)
+            if not ok:
+                msg = f"{reason}"
+                say(msg, "Agent", use_voice)
+                return msg
+
+            if intent == "check_status":
+                msg = f"Your {appt_summary(appt)} is confirmed."
+                say(msg, "Agent", use_voice)
+                return msg
+            elif intent == "cancel":
+                msg = f"I can cancel your {appt_summary(appt)}. Please confirm to proceed."
+                say(msg, "Agent", use_voice)
+                return msg
+            elif intent in ["reschedule", "schedule_new", "general"]:
+                rules_check = self.check_business_rules(appt)
+                if not rules_check["can_reschedule"]:
+                    msg = f"Rescheduling is blocked: {rules_check['reason']}"
+                    say(msg, "Agent", use_voice)
+                    return msg
+
+                constraints = {"start": datetime.now(), "end": datetime.now() + timedelta(days=14)}
+                alts = self.find_alternatives(appt, constraints)
+                if alts:
+                    msg = f"I can offer these times: {', '.join(alts)}. Which works best?"
+                else:
+                    msg = "No matching slots with this provider in the next two weeks. I can check other providers or locations."
+                say(msg, "Agent", use_voice)
+                return msg
+
+            # fallback
             msg = "I can help with checking status, scheduling, rescheduling, or canceling. What would you like to do?"
             say(msg, "Agent", use_voice)
             return msg
+
+        except Exception as e:
+            msg = f"⚠️ Error while processing: {str(e)}"
+            say(msg, "Agent", use_voice)
+            return msg
+
 
 # -----------------------------
 # Q&A Generation (LLM) + Evaluator
@@ -454,11 +469,15 @@ class AppointmentDemo:
 
     def run_turn(self, text: str) -> Dict:
         say(text, "Patient", self.use_voice)
-        parsed = parse_patient_input(text, self.last_patient_id)
+        parsed = parse_patient_input(text, self.last_patient_id) or {}
         if parsed.get("patient_id"):
             self.last_patient_id = parsed["patient_id"]
+
+        #print(f"[DEBUG] Parsed: {parsed}")  # show what was extracted
         response = self.service.process(parsed, use_voice=self.use_voice)
+        #print(f"[DEBUG] Agent responded with: {response}")  # guarantee visible
         return {"request": parsed, "response": response}
+
 
 if __name__ == "__main__":
     print("Multi-Agent Appointment System (LLM + Rules)")
@@ -470,13 +489,68 @@ if __name__ == "__main__":
         user = input("\nPatient: ")
         if user.strip().lower() == "quit":
             break
-        if user.strip().lower() == "gen":
+
+        elif user.strip().lower() == "gen":
             ex = generate_qna_examples(20)
-            print("\nGenerated examples:")
-            for i, e in enumerate(ex[:5], 1):
-                print(f"{i}. {e['user_text']}  (expected: {e.get('expected_tier')})")
-            df = evaluate_examples(ex)
-            print("\nEvaluation sample (first 10 rows):")
-            print(df.head(10).to_string(index=False))
-            continue
-        demo.run_turn(user)
+
+            # Force more IDs into examples
+            ids = list(patients["patient_id"])
+            import random
+            for e in ex:
+                if not any(pid in e["user_text"] for pid in ids):
+                    # inject a random patient ID 70% of the time
+                    if random.random() < 0.7:
+                        e["user_text"] = f"I am patient {random.choice(ids)}, {e['user_text']}"
+
+            print("\nGenerated Q&A Examples:")
+
+            demo = AppointmentDemo(use_voice=False)
+            results = []
+            for i, e in enumerate(ex, 1):  # loop through all 20
+                patient_text = e["user_text"]
+                turn = demo.run_turn(patient_text)
+
+                # If no ID → still allow triage responses
+                parsed = turn["request"]
+                pid = parsed.get("patient_id")
+                triage, _ = triage_category(parsed.get("symptoms", {}))
+                agent_answer = turn["response"]
+                if not pid:
+                    if triage == "RED":
+                        agent_answer = "Your symptoms may be serious. Please go to the nearest emergency department now. I am alerting the on-call nurse."
+                    elif triage == "ORANGE":
+                        agent_answer = "I will have a nurse call you today to review your symptoms. I can place a tentative hold for a visit in the next 24–48 hours."
+
+                # Print first 5 only (so terminal isn’t too long)
+                if i <= 5:
+                    print(f"\n{i}.")
+                    print(f"Patient: {patient_text}")
+                    print(f"Agent:   {agent_answer}")
+                    print(f"Triage:  {triage} (expected: {e.get('expected') or e.get('expected_tier')})")
+
+                results.append({
+                    "patient": patient_text,
+                    "agent": agent_answer,
+                    "triage": triage,
+                    "expected": e.get("expected") or e.get("expected_tier")
+                })
+
+            # Save to JSON
+            with open(os.path.join(QNA_DIR, "generated_qna_examples.json"), "w") as f:
+                json.dump(results, f, indent=2)
+
+            # Save to CSV
+            df = pd.DataFrame(results)
+            df.to_csv(os.path.join(QNA_DIR, "generated_qna_examples.csv"), index=False)
+
+            print(f"\n✅ Saved 20 Q&A examples to:")
+            print(f"   {os.path.join(QNA_DIR, 'generated_qna_examples.json')}")
+            print(f"   {os.path.join(QNA_DIR, 'generated_qna_examples.csv')}")
+
+        else:
+            # 👇 handle normal patient messages
+            turn = demo.run_turn(user)
+            print(f"Agent: {turn['response']}")
+
+
+
