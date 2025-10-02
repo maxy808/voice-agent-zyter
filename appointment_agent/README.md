@@ -145,5 +145,7 @@ Required if you want LLM parsing and Q&A generation (OPENAI_API_KEY).
 
 If no key is set, the workflow still runs in rule-based mode.
 
+```text
 export OPENAI_API_KEY=sk-xxxx   # Mac/Linux
 setx OPENAI_API_KEY "sk-xxxx"   # Windows
+```
