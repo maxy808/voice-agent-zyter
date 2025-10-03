@@ -18,15 +18,15 @@ The agent listens to the patient’s message and identifies:
 Before changing any appointments, the agent asks: **“Is this safe, or do we need urgent care?”**
 
 - **RED (Urgent)**  
-  - Signs: chest pain, trouble breathing, wound opening, very high fever, severe pain  
+  - Signs: chest pain, shortness of breath, incision opening, high fever ≥ 101.5°F, severe pain ≥ 8
   - Action: Tell patient to go to ER / alert nurse immediately. Do not schedule.  
 
 - **ORANGE (Concerning)**  
-  - Signs: low fever, swelling, blood sugar > 300, dizziness, moderate pain  
+  - Signs: low fever (99.5–101.4°F), swelling/redness, blood sugar > 300, dizziness, moderate pain 5–7  
   - Action: A nurse will call today. System can “hold” a slot temporarily.  
 
 - **GREEN (Safe)**  
-  - Routine, non-urgent needs  
+  - Routine scheduling, mild/no symptoms  
   - Action: Proceed with scheduling  
 
 ### 3. Rules Before Booking (Policy Gates)
